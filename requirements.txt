@@ -1,0 +1,8 @@
+# This repo does NOT install SCONE, SconePy, sconegym, or depRL itself --
+# those have their own installation processes (see README.md). This file
+# only lists the additional, ordinary Python packages this repo's own
+# code needs on top of a working sconegym + depRL installation.
+
+numpy>=1.21
+gym==0.21.0   # match whatever gym version your sconegym/depRL install uses
+PyYAML>=5.4

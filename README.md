@@ -74,9 +74,7 @@ appear as `.sto` files in a `run_checkpoint_<step>` subfolder next to
 the checkpoint -> double-click any `.sto` to view the motion.
 
 ## Reward function 
-
-Full rationale and the sequence of bugs that led to the current
-design are in [`docs/CHANGELOG.md`](docs/CHANGELOG.md). Briefly:
+xBriefly:
 
 | Term | Purpose |
 |---|---|

@@ -506,7 +506,7 @@ REWARD_KEYS = [
 
 class TorqueGaitGym(GaitGym):
 
-    ACTUATOR_SIGN = np.array([-1.0, 1.0, -1.0, 1.0], dtype=np.float32)
+    ACTUATOR_SIGN = np.array([1.0, -1.0, 1.0, -1.0], dtype=np.float32)
     MAX_SANE_VELOCITY = 4.0
     BLOWUP_PENALTY = 5.0
 
@@ -526,7 +526,6 @@ class TorqueGaitGym(GaitGym):
         self.action_rate_limit = float(action_rate_limit)
         self.step_size = float(step_size)
         self.init_load = float(init_load)
-
         kwargs["init_activations_mean"] = 0.0
         kwargs["init_activations_std"] = 0.0
 
@@ -542,7 +541,7 @@ class TorqueGaitGym(GaitGym):
         rew_keys.setdefault("self_contact_coeff", 0.0)
         rew_keys.setdefault("nmuscle_coeff", 0.0)
         rew_keys.setdefault("asymmetry_coeff", 0.5)
-        rew_keys.setdefault("impact_coeff", -0.02)
+        rew_keys.setdefault("impact_coeff", 0.00)
         rew_keys.setdefault("leg_symmetry_coeff", 0.0)
         rew_keys.setdefault("limit_proximity_coeff", 0.0)
         self._requested_leg_switch = kwargs.get("leg_switch", True)
@@ -571,6 +570,8 @@ class TorqueGaitGym(GaitGym):
         self._right_effort_sum = 0.0
         self._left_effort_sum = 0.0
 
+        self._printed_index_mapping = False
+
     def reset(self, *, seed=None, return_info=False, options=None):
         if seed is not None:
             np.random.seed(seed)
@@ -584,7 +585,7 @@ class TorqueGaitGym(GaitGym):
         self.steps = 0
         self.fall_time = -1.0
 
-        self.model.set_store_data(self.store_data if hasattr(self, 'store_data') else False)
+        self.model.set_store_data(self.store_next)
 
         dof_pos = np.asarray(self.init_dof_pos, dtype=np.float64).copy()
 
@@ -607,7 +608,6 @@ class TorqueGaitGym(GaitGym):
                 dof_pos[self.knee_r_idx],
             )
             self.model.set_dof_positions(dof_pos)
-            
         dof_vel = np.zeros(len(self.init_dof_vel), dtype=np.float64)
         self.model.set_dof_velocities(dof_vel)
         self.model.init_state_from_dofs()
@@ -620,41 +620,14 @@ class TorqueGaitGym(GaitGym):
         self.current_action = np.zeros(n_act, dtype=np.float32)
         self._blew_up = False
         self._prev_grf = float(self.model.contact_load())
-        self._right_effort_ema = 0.0
-        self._left_effort_ema = 0.0
-        
-        obs = self._get_obs()
 
-        if return_info:
-            return obs, {}
-        return obs
-
-        self.model.set_dof_positions(dof_pos)
-        if self.leg_switch and np.random.uniform() < 0.5:
-            dof_pos = self.model.dof_position_array()
-            dof_pos[self.hip_r_idx], dof_pos[self.hip_l_idx] = (
-                dof_pos[self.hip_l_idx],
-                dof_pos[self.hip_r_idx],
-            )
-            dof_pos[self.knee_r_idx], dof_pos[self.knee_l_idx] = (
-                dof_pos[self.knee_l_idx],
-                dof_pos[self.knee_r_idx],
-            )
-            self.model.set_dof_positions(dof_pos)
-        dof_vel = np.zeros(len(self.init_dof_vel), dtype=np.float64)
-        self.model.set_dof_velocities(dof_vel)
-        self.model.init_state_from_dofs()
-
-        if self.init_load > 0.0:
-            self.model.adjust_state_for_load(self.init_load)
-
-        n_act = len(self.model.actuators())
-        self.prev_action = np.zeros(n_act, dtype=np.float32)
-        self.current_action = np.zeros(n_act, dtype=np.float32)
-        self._blew_up = False
-        self._prev_grf = float(self.model.contact_load())
         self._right_effort_sum = 0.0
         self._left_effort_sum = 0.0
+
+        if not self._printed_index_mapping:
+            self.print_index_mapping()
+            self._printed_index_mapping = True
+
         obs = self._get_obs()
 
         if return_info:
@@ -783,9 +756,9 @@ class TorqueGaitGym(GaitGym):
             "smooth": self.smooth_coeff * smooth_penalty,
             "joint_limit": self.joint_limit_coeff * self._joint_limit_torques(),
             "self_contact": self.self_contact_coeff * self._get_self_contact(),
+            "asymmetry": -getattr(self, "asymmetry_coeff", 0.5) * asymmetry_penalty,
             "leg_symmetry": -leg_symmetry_term,
             "limit_proximity": -limit_proximity_term,
-            "impact": -getattr(self, "impact_coeff", 0.02) * impact_jerk,
         }
         return self.rwd_dict
 

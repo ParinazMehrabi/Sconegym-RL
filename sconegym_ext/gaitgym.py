@@ -526,6 +526,14 @@ class TorqueGaitGym(GaitGym):
         self.action_rate_limit = float(action_rate_limit)
         self.step_size = float(step_size)
         self.init_load = float(init_load)
+        # asymmetry_window removed: right/left effort is now compared
+        # over the WHOLE episode-so-far (see _update_rwd_dict), not a
+        # fixed 50-step sliding window. A short window only "sees"
+        # recent behavior, so a policy that alternates being
+        # lopsided in bursts longer than the window could slip
+        # through unpenalized between bursts. A whole-episode running
+        # average has no such blind spot.
+
         kwargs["init_activations_mean"] = 0.0
         kwargs["init_activations_std"] = 0.0
 
@@ -571,6 +579,24 @@ class TorqueGaitGym(GaitGym):
         self._left_effort_sum = 0.0
 
         self._printed_index_mapping = False
+
+    def print_index_mapping(self):
+        try:
+            act_names = [a.name() for a in self.model.actuators()]
+        except Exception:
+            act_names = ["<no name() on actuator>"]
+        try:
+            dof_names = [d.name() for d in self.model.dofs()]
+        except Exception:
+            dof_names = ["<no name() on dof, يا متد dofs() وجود نداره>"]
+        print("=== TorqueGaitGym index sanity check ===")
+        print("actuators() order:", act_names)
+        print("expected action order: [hip_r, knee_r, hip_l, knee_l]")
+        print("dof array order (اگه در دسترس بود):", dof_names)
+        print(
+            "expected: idx0=pelvis_tilt idx1=pelvis_tx idx2=pelvis_ty "
+            "idx3=hip_r idx4=knee_r idx5=hip_l idx6=knee_l"
+        )
 
     def reset(self, *, seed=None, return_info=False, options=None):
         if seed is not None:

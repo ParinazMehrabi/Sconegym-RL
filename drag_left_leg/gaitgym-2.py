@@ -503,21 +503,20 @@ REWARD_KEYS = [
     "smooth_coeff", "nmuscle_coeff", "self_contact_coeff",
     "upright_coeff",
 ]
-
+ 
 class TorqueGaitGym(GaitGym):
-
     ACTUATOR_SIGN = np.array([-1.0, 1.0, -1.0, 1.0], dtype=np.float32)
     MAX_SANE_VELOCITY = 4.0
     BLOWUP_PENALTY = 5.0
-
+ 
     def __init__(
         self,
         model_file,
         *args,
-        action_scale=100.0,
-        action_rate_limit=0.15,
-        step_size=0.01,
-        init_load=0.5,
+        action_scale=100.0,         
+        action_rate_limit=0.15,    
+        step_size=0.01,             
+        init_load=0.5,               
         **kwargs,
     ):
         self.is_torque_actuated = True
@@ -526,169 +525,113 @@ class TorqueGaitGym(GaitGym):
         self.action_rate_limit = float(action_rate_limit)
         self.step_size = float(step_size)
         self.init_load = float(init_load)
-
+ 
         kwargs["init_activations_mean"] = 0.0
         kwargs["init_activations_std"] = 0.0
-
+ 
+ 
         rew_keys = dict(kwargs.get("rew_keys", {}))
-
+ 
         rew_keys.setdefault("vel_coeff", 10.0)
         rew_keys.setdefault("height_coeff", 8.0)
         rew_keys.setdefault("upright_coeff", 3.0)
+ 
         rew_keys.setdefault("grf_coeff", -0.08)
         rew_keys.setdefault("joint_limit_coeff", -0.05)
         rew_keys.setdefault("smooth_coeff", -0.03)
-
+ 
         rew_keys.setdefault("self_contact_coeff", 0.0)
         rew_keys.setdefault("nmuscle_coeff", 0.0)
-        rew_keys.setdefault("asymmetry_coeff", 0.5)
-        rew_keys.setdefault("impact_coeff", -0.02)
-        rew_keys.setdefault("leg_symmetry_coeff", 0.0)
-        rew_keys.setdefault("limit_proximity_coeff", 0.0)
-        self._requested_leg_switch = kwargs.get("leg_switch", True)
-
+ 
         kwargs["rew_keys"] = rew_keys
         self.pelvis_tilt_idx = 0
         self.pelvis_tx_idx = 1
         self.pelvis_ty_idx = 2
-
+ 
         self.hip_r_idx = 3
         self.knee_r_idx = 4
-
+ 
         self.hip_l_idx = 5
         self.knee_l_idx = 6
-
         super().__init__(model_file, *args, **kwargs)
-
         self.init_dof_pos_std = 0.02
         self.init_dof_vel_std = 0.0
-        self.leg_switch = bool(self._requested_leg_switch)
-
+        self.leg_switch = True
         n_act = len(self.model.actuators())
         self.prev_action = np.zeros(n_act, dtype=np.float32)
         self.current_action = np.zeros(n_act, dtype=np.float32)
         self._blew_up = False
-        self._right_effort_sum = 0.0
-        self._left_effort_sum = 0.0
-
+ 
     def reset(self, *, seed=None, return_info=False, options=None):
         if seed is not None:
             np.random.seed(seed)
-
+ 
         self.episode_number = np.random.randint(0, 1000000)
         self.model.reset()
         self.has_reset = True
-
+ 
         self.time = 0.0
         self.total_reward = 0.0
         self.steps = 0
         self.fall_time = -1.0
-
-        self.model.set_store_data(self.store_data if hasattr(self, 'store_data') else False)
-
+ 
+        self.model.set_store_data(self.store_next)
         dof_pos = np.asarray(self.init_dof_pos, dtype=np.float64).copy()
-
+ 
         if self.init_dof_pos_std > 0.0:
             dof_pos += np.random.normal(0.0, self.init_dof_pos_std, size=len(dof_pos))
-
+ 
         dof_pos[self.pelvis_tilt_idx] = np.clip(dof_pos[self.pelvis_tilt_idx], -0.08, 0.08)
         dof_pos[self.knee_r_idx] = np.clip(dof_pos[self.knee_r_idx], -0.30, -0.10)
         dof_pos[self.knee_l_idx] = np.clip(dof_pos[self.knee_l_idx], -0.30, -0.10)
-
+ 
         self.model.set_dof_positions(dof_pos)
-        if self.leg_switch and np.random.uniform() < 0.5:
-            dof_pos = self.model.dof_position_array()
-            dof_pos[self.hip_r_idx], dof_pos[self.hip_l_idx] = (
-                dof_pos[self.hip_l_idx],
-                dof_pos[self.hip_r_idx],
-            )
-            dof_pos[self.knee_r_idx], dof_pos[self.knee_l_idx] = (
-                dof_pos[self.knee_l_idx],
-                dof_pos[self.knee_r_idx],
-            )
-            self.model.set_dof_positions(dof_pos)
-            
         dof_vel = np.zeros(len(self.init_dof_vel), dtype=np.float64)
         self.model.set_dof_velocities(dof_vel)
         self.model.init_state_from_dofs()
-
+ 
         if self.init_load > 0.0:
             self.model.adjust_state_for_load(self.init_load)
-
+ 
         n_act = len(self.model.actuators())
         self.prev_action = np.zeros(n_act, dtype=np.float32)
         self.current_action = np.zeros(n_act, dtype=np.float32)
         self._blew_up = False
-        self._prev_grf = float(self.model.contact_load())
-        self._right_effort_ema = 0.0
-        self._left_effort_ema = 0.0
-        
+ 
         obs = self._get_obs()
-
+ 
         if return_info:
             return obs, {}
         return obs
-
-        self.model.set_dof_positions(dof_pos)
-        if self.leg_switch and np.random.uniform() < 0.5:
-            dof_pos = self.model.dof_position_array()
-            dof_pos[self.hip_r_idx], dof_pos[self.hip_l_idx] = (
-                dof_pos[self.hip_l_idx],
-                dof_pos[self.hip_r_idx],
-            )
-            dof_pos[self.knee_r_idx], dof_pos[self.knee_l_idx] = (
-                dof_pos[self.knee_l_idx],
-                dof_pos[self.knee_r_idx],
-            )
-            self.model.set_dof_positions(dof_pos)
-        dof_vel = np.zeros(len(self.init_dof_vel), dtype=np.float64)
-        self.model.set_dof_velocities(dof_vel)
-        self.model.init_state_from_dofs()
-
-        if self.init_load > 0.0:
-            self.model.adjust_state_for_load(self.init_load)
-
-        n_act = len(self.model.actuators())
-        self.prev_action = np.zeros(n_act, dtype=np.float32)
-        self.current_action = np.zeros(n_act, dtype=np.float32)
-        self._blew_up = False
-        self._prev_grf = float(self.model.contact_load())
-        self._right_effort_sum = 0.0
-        self._left_effort_sum = 0.0
-        obs = self._get_obs()
-
-        if return_info:
-            return obs, {}
-        return obs
-
+ 
     def step(self, action):
         if not self.has_reset:
             raise RuntimeError("You have to call reset() once before step()")
-
+ 
         action = np.asarray(action, dtype=np.float32)
         action = np.clip(action, -1.0, 1.0)
-
+ 
         action = np.clip(
             action,
             self.prev_action - self.action_rate_limit,
             self.prev_action + self.action_rate_limit,
         )
-
+ 
         self.current_action = action.copy()
         torque = action * self.action_scale * self.ACTUATOR_SIGN
         self.model.set_actuator_inputs(torque)
-
+ 
         self.model.advance_simulation_to(self.time + self.step_size)
-
+ 
         reward = float(self._get_rew())
         obs = self._get_obs()
         done = self._get_done()
         reward = float(self._apply_termination_cost(reward, done))
-
+ 
         self.time += self.step_size
         self.total_reward += reward
         self.prev_action = self.current_action.copy()
-
+ 
         if done:
             if self.store_next:
                 self.model.write_results(
@@ -696,12 +639,12 @@ class TorqueGaitGym(GaitGym):
                 )
                 self.store_next = False
             self.episode += 1
-
+ 
         return obs, reward, done, {}
-
+ 
     def _setup_action_observation_spaces(self):
         num_act = len(self.model.actuators())
-
+ 
         self.action_space = gym.spaces.Box(
             low=-np.ones(num_act, dtype=np.float32),
             high=np.ones(num_act, dtype=np.float32),
@@ -710,71 +653,43 @@ class TorqueGaitGym(GaitGym):
         self.observation_space = gym.spaces.Box(
             low=-1e4, high=1e4, shape=self._get_obs().shape, dtype=np.float32
         )
-
+ 
     def _get_obs(self):
         dof_values = np.asarray(self.model.dof_position_array(), dtype=np.float32).copy()
         dof_vels = np.asarray(self.model.dof_velocity_array(), dtype=np.float32).copy()
         dof_values[self.pelvis_tx_idx] = 0.0
-
+ 
         head_ori = np.asarray(self.head_body.orientation().array(), dtype=np.float32)
         head_ang_vel = np.asarray(self.head_body.ang_vel().array(), dtype=np.float32)
         feet_rel = np.asarray(self._get_feet_relative_position(), dtype=np.float32)
-
+ 
         current_action = getattr(self, "current_action", None)
         if current_action is None:
             current_action = np.zeros(len(self.model.actuators()), dtype=np.float32)
         else:
             current_action = np.asarray(current_action, dtype=np.float32)
-
+ 
         return np.concatenate(
             [dof_values, dof_vels, head_ori, head_ang_vel, feet_rel, current_action],
             dtype=np.float32,
         ).copy()
-
+ 
     def custom_reward(self):
         self._update_rwd_dict()
         return float(np.sum(list(self.rwd_dict.values())))
-
+ 
     def _update_rwd_dict(self):
         vel = float(self.model_velocity())
         height = float(self.model.com_pos().y)
-        if vel <= self.target_vel:
-            vel_reward = vel / self.target_vel
-        else:
-            overspeed = vel - self.target_vel
-            vel_reward = 1.0 - (overspeed / self.target_vel)
-        vel_reward = float(np.clip(vel_reward, -1.5, 1.0))
-        if vel > self.target_vel:
-            overshoot = (vel - self.target_vel) / self.target_vel
-            vel_reward -= 0.3 * (overshoot ** 2)
-            vel_reward = float(np.clip(vel_reward, -1.5, 1.0))
-
+        vel_reward = float(np.clip(vel / self.target_vel, -1.5, 1.0))
+ 
+        height_reward = float(np.clip((height - 0.50) / 0.40, 0.0, 1.0))
+ 
         pelvis_tilt = float(self.model.dof_position_array()[self.pelvis_tilt_idx])
         upright_penalty = pelvis_tilt ** 2
-        height_reward = float(np.clip((height - 0.50) / 0.40, 0.0, 1.0))
+ 
         smooth_penalty = float(np.mean(np.square(self.current_action - self.prev_action)))
-
-        right_effort = float(
-            np.abs(self.current_action[0]) + np.abs(self.current_action[1])
-        )
-        left_effort = float(
-            np.abs(self.current_action[2]) + np.abs(self.current_action[3])
-        )
-        self._right_effort_sum += right_effort
-        self._left_effort_sum += left_effort
-        steps_so_far = max(1, self.steps)
-        mean_right = self._right_effort_sum / float(steps_so_far)
-        mean_left = self._left_effort_sum / float(steps_so_far)
-        asymmetry_penalty = abs(mean_right - mean_left)
-
-        current_grf = float(self.model.contact_load())
-        prev_grf = getattr(self, "_prev_grf", current_grf)
-        impact_jerk = abs(current_grf - prev_grf)
-        self._prev_grf = current_grf
-        leg_symmetry_term = getattr(self, "leg_symmetry_coeff", 0.0) * asymmetry_penalty
-
-        limit_proximity_term = getattr(self, "limit_proximity_coeff", 0.0) * self._joint_limit_proximity()
-
+ 
         self.rwd_dict = {
             "velocity": self.vel_coeff * vel_reward,
             "height": self.height_coeff * height_reward,
@@ -783,57 +698,35 @@ class TorqueGaitGym(GaitGym):
             "smooth": self.smooth_coeff * smooth_penalty,
             "joint_limit": self.joint_limit_coeff * self._joint_limit_torques(),
             "self_contact": self.self_contact_coeff * self._get_self_contact(),
-            "leg_symmetry": -leg_symmetry_term,
-            "limit_proximity": -limit_proximity_term,
-            "impact": -getattr(self, "impact_coeff", 0.02) * impact_jerk,
         }
         return self.rwd_dict
-
+ 
     def _grf(self):
         grf = float(self.model.contact_load())
         return max(0.0, grf - 1.2)
-
+ 
     def _joint_limit_torques(self):
         ignored = {"ankle_r", "ankle_l", "back"}
         joints = [j for j in self.model.joints() if j.name() not in ignored]
         if not joints:
             return 0.0
         return float(np.mean([np.mean(np.abs(j.limit_torque().array())) for j in joints]))
-
-    def _joint_limit_proximity(self):
-        ignored = {"ankle_r", "ankle_l", "back"}
-        proximities = []
-        for j in self.model.joints():
-            if j.name() in ignored:
-                continue
-            try:
-                for dof in j.dofs():
-                    pos = dof.pos()
-                    lo, hi = dof.range()
-                    if hi > lo:
-                        rel = (pos - lo) / (hi - lo)
-                        dist_to_edge = min(rel, 1.0 - rel)
-                        proximities.append(max(0.0, 0.1 - dist_to_edge) / 0.1)
-            except Exception:
-                continue
-        if not proximities:
-            return 0.0
-        return float(np.mean(proximities))
-
+ 
     def _get_self_contact(self):
         ignored = {"calcn_r", "calcn_l"}
         contact_force = np.sum(
             [np.abs(b.contact_force().array()) for b in self.model.bodies() if b.name() not in ignored]
         )
         return float(np.clip(contact_force, 0.0, 100.0) / 100.0)
-
+ 
+ 
     def _get_done(self):
         com_height = float(self.model.com_pos().y)
         head_height = float(self.head_body.com_pos().y)
-
+ 
         fall = com_height < self.min_com_height or head_height < self.min_head_height
         current_time = float(self.model.time())
-
+ 
         if fall:
             if self.fall_time < 0.0:
                 self.fall_time = current_time
@@ -845,17 +738,18 @@ class TorqueGaitGym(GaitGym):
         if raw_speed > self.MAX_SANE_VELOCITY or not np.isfinite(raw_speed):
             self._blew_up = True
             return True
-
+ 
         if self.steps >= self._max_episode_steps:
             return True
-
+ 
         return False
-
+ 
     def _apply_termination_cost(self, reward, done):
         if done and self._blew_up:
             reward -= self.BLOWUP_PENALTY
         return reward
-
+ 
     @property
     def horizon(self):
         return self._max_episode_steps
+ 

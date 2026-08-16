@@ -571,8 +571,6 @@ class TorqueGaitGym(GaitGym):
         self._right_effort_sum = 0.0
         self._left_effort_sum = 0.0
 
-        self._printed_index_mapping = False
-
     def reset(self, *, seed=None, return_info=False, options=None):
         if seed is not None:
             np.random.seed(seed)
@@ -751,7 +749,6 @@ class TorqueGaitGym(GaitGym):
             "smooth": self.smooth_coeff * smooth_penalty,
             "joint_limit": self.joint_limit_coeff * self._joint_limit_torques(),
             "self_contact": self.self_contact_coeff * self._get_self_contact(),
-            "asymmetry": -getattr(self, "asymmetry_coeff", 0.5) * asymmetry_penalty,
             "leg_symmetry": -leg_symmetry_term,
             "limit_proximity": -limit_proximity_term,
             "impact": -getattr(self, "impact_coeff", 0.02) * impact_jerk,

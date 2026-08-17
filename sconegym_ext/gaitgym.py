@@ -526,14 +526,6 @@ class TorqueGaitGym(GaitGym):
         self.action_rate_limit = float(action_rate_limit)
         self.step_size = float(step_size)
         self.init_load = float(init_load)
-        # asymmetry_window removed: right/left effort is now compared
-        # over the WHOLE episode-so-far (see _update_rwd_dict), not a
-        # fixed 50-step sliding window. A short window only "sees"
-        # recent behavior, so a policy that alternates being
-        # lopsided in bursts longer than the window could slip
-        # through unpenalized between bursts. A whole-episode running
-        # average has no such blind spot.
-
         kwargs["init_activations_mean"] = 0.0
         kwargs["init_activations_std"] = 0.0
 
@@ -548,10 +540,12 @@ class TorqueGaitGym(GaitGym):
 
         rew_keys.setdefault("self_contact_coeff", 0.0)
         rew_keys.setdefault("nmuscle_coeff", 0.0)
-        rew_keys.setdefault("asymmetry_coeff", 0.5)
+        rew_keys.setdefault("asymmetry_coeff", 0.0)
         rew_keys.setdefault("impact_coeff", 0.00)
         rew_keys.setdefault("leg_symmetry_coeff", 0.0)
+        rew_keys.setdefault("knee_flex_coeff", 0.5)
         rew_keys.setdefault("limit_proximity_coeff", 0.0)
+        
         self._requested_leg_switch = kwargs.get("leg_switch", True)
 
         kwargs["rew_keys"] = rew_keys
@@ -635,11 +629,23 @@ class TorqueGaitGym(GaitGym):
             )
             self.model.set_dof_positions(dof_pos)
         dof_vel = np.zeros(len(self.init_dof_vel), dtype=np.float64)
+        dof_vel[self.pelvis_tx_idx] = 0.7
         self.model.set_dof_velocities(dof_vel)
+        # print("BEFORE init_state_from_dofs")
+        # print(self.model.dof_position_array())
+        # print(self.model.dof_velocity_array())
         self.model.init_state_from_dofs()
+        # print("AFTER init_state_from_dofs")
+        # print(self.model.dof_position_array())
+        # print(self.model.dof_velocity_array())
 
         if self.init_load > 0.0:
             self.model.adjust_state_for_load(self.init_load)
+            
+        
+        # print("AFTER adjust_state_for_load")
+        # print(self.model.dof_position_array())
+        # print(self.model.dof_velocity_array())
 
         n_act = len(self.model.actuators())
         self.prev_action = np.zeros(n_act, dtype=np.float32)
@@ -735,57 +741,158 @@ class TorqueGaitGym(GaitGym):
         return float(np.sum(list(self.rwd_dict.values())))
 
     def _update_rwd_dict(self):
+
         vel = float(self.model_velocity())
         height = float(self.model.com_pos().y)
+
         if vel <= self.target_vel:
             vel_reward = vel / self.target_vel
         else:
             overspeed = vel - self.target_vel
-            vel_reward = 1.0 - (overspeed / self.target_vel)
-        vel_reward = float(np.clip(vel_reward, -1.5, 1.0))
-        if vel > self.target_vel:
-            overshoot = (vel - self.target_vel) / self.target_vel
-            vel_reward -= 0.3 * (overshoot ** 2)
-            vel_reward = float(np.clip(vel_reward, -1.5, 1.0))
 
-        pelvis_tilt = float(self.model.dof_position_array()[self.pelvis_tilt_idx])
+            vel_reward = np.exp(
+                -(overspeed ** 2) / 0.25
+            )
+
+        vel_reward = float(
+            np.clip(
+                vel_reward,
+                -1.5,
+                1.0,
+            )
+        )
+
+        if vel > self.target_vel:
+            overshoot = (
+                vel - self.target_vel
+            ) / self.target_vel
+
+            vel_reward -= (
+                0.3 * (overshoot ** 2)
+            )
+
+            vel_reward = float(
+                np.clip(
+                    vel_reward,
+                    -1.5,
+                    1.0,
+                )
+            )
+
+        pelvis_tilt = float(
+            self.model.dof_position_array()[
+                self.pelvis_tilt_idx
+            ]
+        )
+
         upright_penalty = pelvis_tilt ** 2
-        height_reward = float(np.clip((height - 0.50) / 0.40, 0.0, 1.0))
-        smooth_penalty = float(np.mean(np.square(self.current_action - self.prev_action)))
+
+        height_reward = float(
+            np.clip(
+                (height - 0.50) / 0.40,
+                0.0,
+                1.0,
+            )
+        )
+        smooth_penalty = float(
+            np.mean(
+                np.square(
+                    self.current_action
+                    - self.prev_action
+                )
+            )
+        )
+
 
         right_effort = float(
-            np.abs(self.current_action[0]) + np.abs(self.current_action[1])
+            np.abs(self.current_action[0])
+            + np.abs(self.current_action[1])
         )
+
         left_effort = float(
-            np.abs(self.current_action[2]) + np.abs(self.current_action[3])
+            np.abs(self.current_action[2])
+            + np.abs(self.current_action[3])
         )
+
         self._right_effort_sum += right_effort
         self._left_effort_sum += left_effort
-        steps_so_far = max(1, self.steps)
-        mean_right = self._right_effort_sum / float(steps_so_far)
-        mean_left = self._left_effort_sum / float(steps_so_far)
-        asymmetry_penalty = abs(mean_right - mean_left)
 
-        current_grf = float(self.model.contact_load())
-        prev_grf = getattr(self, "_prev_grf", current_grf)
-        impact_jerk = abs(current_grf - prev_grf)
+        steps_so_far = max(
+            1,
+            self.steps,
+        )
+
+        mean_right = (
+            self._right_effort_sum
+            / float(steps_so_far)
+        )
+
+        mean_left = (
+            self._left_effort_sum
+            / float(steps_so_far)
+        )
+
+        asymmetry_penalty = abs(
+            mean_right - mean_left
+        )
+        current_grf = float(
+            self.model.contact_load()
+        )
+
+        prev_grf = getattr(
+            self,
+            "_prev_grf",
+            current_grf,
+        )
+
+        impact_jerk = abs(
+            current_grf - prev_grf
+        )
+
         self._prev_grf = current_grf
-        leg_symmetry_term = getattr(self, "leg_symmetry_coeff", 0.0) * asymmetry_penalty
-
-        limit_proximity_term = getattr(self, "limit_proximity_coeff", 0.0) * self._joint_limit_proximity()
+        knee_flex_penalty = (
+            self._knee_flex_penalty()
+        )
 
         self.rwd_dict = {
-            "velocity": self.vel_coeff * vel_reward,
-            "height": self.height_coeff * height_reward,
-            "upright": -self.upright_coeff * upright_penalty,
-            "grf": self.grf_coeff * self._grf(),
-            "smooth": self.smooth_coeff * smooth_penalty,
-            "joint_limit": self.joint_limit_coeff * self._joint_limit_torques(),
-            "self_contact": self.self_contact_coeff * self._get_self_contact(),
-            "asymmetry": -getattr(self, "asymmetry_coeff", 0.5) * asymmetry_penalty,
-            "leg_symmetry": -leg_symmetry_term,
-            "limit_proximity": -limit_proximity_term,
+            "velocity":
+                self.vel_coeff
+                * vel_reward,
+            "height":
+                self.height_coeff
+                * height_reward,
+
+            "upright":
+                -self.upright_coeff
+                * upright_penalty,
+            "grf":
+                self.grf_coeff
+                * self._grf(),
+            "impact":
+                -self.impact_coeff
+                * impact_jerk,
+            "smooth":
+                self.smooth_coeff
+                * smooth_penalty,
+            "joint_limit":
+                self.joint_limit_coeff
+                * self._joint_limit_torques(),
+            "limit_proximity": 0.0,
+            "knee_flex":
+                -self.knee_flex_coeff
+                * knee_flex_penalty,
+            "leg_symmetry":
+                -self.leg_symmetry_coeff
+                * asymmetry_penalty,
+            "self_contact":
+                self.self_contact_coeff
+                * self._get_self_contact(),
+
+            "asymmetry":
+                -self.asymmetry_coeff
+                * asymmetry_penalty,
         }
+
         return self.rwd_dict
 
     def _grf(self):
@@ -849,6 +956,25 @@ class TorqueGaitGym(GaitGym):
             return True
 
         return False
+    def _knee_flex_penalty(self):
+        q = np.asarray(
+            self.model.dof_position_array(),
+            dtype=np.float64,
+        )
+
+        knee_r = abs(float(q[self.knee_r_idx]))
+        knee_l = abs(float(q[self.knee_l_idx]))
+        threshold = 0.8
+
+        excess_r = max(0.0, knee_r - threshold)
+        excess_l = max(0.0, knee_l - threshold)
+
+        penalty = (
+            excess_r ** 2
+            + excess_l ** 2
+        )
+
+        return float(penalty)
 
     def _apply_termination_cost(self, reward, done):
         if done and self._blew_up:

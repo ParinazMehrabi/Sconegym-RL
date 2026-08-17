@@ -20,14 +20,14 @@ working_dir: "IGNORED_FOR_HYFYDY"
 env_args:
   clip_actions: false
 
-  vel_coeff: 6.0
+  vel_coeff: 4.0
   height_coeff: 3.5             
                                 
                                  
   grf_coeff: -0.08
   joint_limit_coeff: -0.3
-  limit_proximity_coeff: -3.0 
-  smooth_coeff: -0.1
+  limit_proximity_coeff: 0.0 
+  smooth_coeff: -0.05
   leg_symmetry_coeff: 1.0   
   nmuscle_coeff: 0.0
   self_contact_coeff: 0.0
@@ -40,7 +40,9 @@ env_args:
                                  
   action_rate_limit: 0.15
   asymmetry_coeff: 0.0
-  impact_coeff: 0.02
+  impact_coeff: 0.1
+  knee_flex_coeff: 0.5
+  upright_coeff: 4.0
 
   leg_switch: true
 

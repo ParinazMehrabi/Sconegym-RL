@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# macOS
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# SCONE output files
+*.sto
+*.sconeoutput
+*.log
+
+# Training outputs
+checkpoints/
+results/
+
+# RL checkpoints
+*.pt
+*.pth
+*.ckpt
+
+# Tensorboard
+runs/
+tensorboard/
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.swp

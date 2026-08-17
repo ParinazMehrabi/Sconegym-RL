@@ -74,25 +74,167 @@ checkpoint (`.pt`) file -> double-click to run rollouts -> results
 appear as `.sto` files in a `run_checkpoint_<step>` subfolder next to
 the checkpoint -> double-click any `.sto` to view the motion.
 
-## Reward function
+## Environment Extension
 
-The `TorqueGaitGym` reward is a weighted sum of the terms below (all
-coefficients configurable per-term via `env_args` in the yaml):
+The custom environment:
 
-| Term | Purpose |
-|---|---|
-| `velocity` | penalizes both under- and over-shooting, including standing still or walking backward -- not a flat plateau, so overspeeding is never reward-neutral |
-| `height` | Encourages staying upright / not collapsing |
-| `upright` | Penalizes pelvis tilt (either direction) |
-| `grf` | Penalizes excessive ground reaction force |
-| `joint_limit` | Penalizes torque generated at a joint's hard mechanical stop (reactive -- after contact) |
-| `limit_proximity` | Anticipatory version of the above: penalizes approaching a hip/knee limit *before* impact, based on normalized distance to the DOF's range edge |
-| `smooth` | Penalizes jerky step-to-step action changes |
-| `asymmetry` / `leg_symmetry` | Compares mean right-leg effort (`|hip_r|+|knee_r|`) vs. mean left-leg effort, accumulated over the **entire episode so far** -- directly penalizes "one leg does all the work, the other drags" |
-| `impact` | Penalizes sudden jumps in total ground contact force step-to-step -- a proxy for hard/stomping landings, since per-geometry (heel vs. toe) contact force isn't exposed by the sconepy API used here |
-| `self_contact` | Penalizes contact force on any body other than the feet (e.g. knee-on-knee) |
+    TorqueGaitGym
 
-`ankle_r`, `ankle_l`, and `back` are excluded from `joint_limit` /
-`limit_proximity` since they are rigidly locked by design (`0..0`
-range) -- any force there reflects contact reaction, not policy
-behavior.
+inherits from:
+
+    sconegym.gaitgym.GaitGym
+
+It adds:
+
+-   torque-based actuation
+-   torque scaling
+-   action rate limiting
+-   custom reward terms
+-   ankle-locked H0918 support
+
+## Action Space
+
+The policy outputs normalized actions:
+
+    [-1,1]
+
+The actions are converted to torque commands:
+
+    torque = action * action_scale
+
+The current configuration uses:
+
+    action_scale: 120.0
+
+Action mapping:
+
+  Action   Joint
+  -------- --------
+  0        hip_r
+  1        knee_r
+  2        hip_l
+  3        knee_l
+
+## Reward Function
+
+The reward is a weighted sum of:
+
+### Velocity
+
+Encourages walking close to the target velocity and penalizes excessive
+overspeed.
+
+### Height
+
+Encourages maintaining sufficient COM height.
+
+### Upright
+
+Penalizes pelvis orientation errors.
+
+### Ground Reaction Force
+
+Penalizes excessive contact forces.
+
+### Joint Limit
+
+Penalizes torque generation near mechanical limits.
+
+Locked joints such as ankle and back are excluded because they are
+rigidly constrained.
+
+### Limit Proximity
+
+Provides an anticipatory penalty before reaching joint limits.
+
+### Smoothness
+
+Penalizes abrupt changes in torque commands.
+
+### Leg Symmetry
+
+Compares accumulated effort between the right and left legs to reduce
+one-sided gait behavior.
+
+### Impact
+
+Penalizes sudden increases in total contact force.
+
+## Training Configuration
+
+Current important parameters:
+
+``` yaml
+vel_coeff: 6.0
+height_coeff: 3.5
+grf_coeff: -0.08
+joint_limit_coeff: -0.3
+limit_proximity_coeff: -3.0
+smooth_coeff: -0.1
+leg_symmetry_coeff: 1.0
+action_scale: 120.0
+action_rate_limit: 0.15
+```
+
+DEP configuration uses:
+
+-   DEP exploration
+-   Tuned MPO
+-   AdaptiveEnergyBuffer replay
+
+## Training
+
+Install dependencies:
+
+``` bash
+pip install -r requirements.txt
+```
+
+Run training:
+
+``` bash
+python -m deprl.main configs/torque_h0918_ankles_locked.yaml
+```
+
+The environment is registered through:
+
+    sconegym_ext
+
+and the environment ID is:
+
+    sconewalk_h0918_ankles_locked-v1
+
+## Resume Training
+
+Continue from checkpoint:
+
+``` yaml
+resume: true
+```
+
+Start a new experiment:
+
+``` yaml
+resume: false
+```
+
+## Project Structure
+
+    h0918-ankles-locked-torque-rl
+
+    ├── configs
+    ├── models
+    ├── sconegym_ext
+    │   ├── gaitgym.py
+    │   ├── init_v0.py
+    │   └── __init__.py
+    ├── requirements.txt
+    └── README.md
+
+## References
+
+SCONE Gym: https://github.com/tgeijten/sconegym
+
+depRL: https://github.com/tgeijten/depRL/tree/sconegym
+
+SCONE: https://scone.software
